@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce CSV Product Feed Importer
  * Description: Preview-first WooCommerce CSV importer with automatic mapping, saved presets, dry-run summaries and batched imports.
- * Version: 1.5.1
+ * Version: 1.5.2
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
@@ -11,7 +11,9 @@ if (!defined('ABSPATH')) { exit; }
 
 final class WC_CSV_Product_Feed_Importer {
     private static $instance;
-    private $batch_size = 10; // Reduced from 20 to prevent timeout
+    private $batch_size = 5; // Smaller batches for reliability
+    private $batch_timeout = 30; // seconds per batch before considering it stalled
+    private $max_retries = 3; // retry a batch up to 3 times
     private $fields = ['name'=>'ProductName','sku'=>'ProductCode','category'=>'Category','description'=>'ProductSummary','price'=>'Price','stock'=>'AvailableQty','image'=>'Image'];
 
     public static function instance() { 
@@ -23,6 +25,7 @@ final class WC_CSV_Product_Feed_Importer {
         add_action('admin_post_wc_csv_product_feed_import', [$this,'handle_import']);
         add_action('admin_post_wc_csv_product_feed_confirm', [$this,'confirm_import']);
         add_action('wp_ajax_wc_csv_feed_batch', [$this,'ajax_batch']);
+        add_action('wp_ajax_wc_csv_feed_watchdog', [$this,'watchdog']);
     }
 
     public function admin_menu() { 
@@ -114,40 +117,105 @@ final class WC_CSV_Product_Feed_Importer {
         }
         echo '<h2>Importing products</h2>';
         echo '<div style="max-width:760px;background:#dcdcde;height:28px;border-radius:4px;overflow:hidden">';
-        echo '<div id="wc-csv-progress-bar" style="height:28px;width:0;background:#0073aa"></div></div>';
-        echo '<p id="wc-csv-progress-text">Initializing...</p>';
+        echo '<div id="wc-csv-progress-bar" style="height:28px;width:0;background:#0073aa;transition:width 0.3s"></div></div>';
+        echo '<p id="wc-csv-progress-text">Starting import...</p>';
+        echo '<p id="wc-csv-status-details" style="font-size:12px;color:#666;margin-top:10px;"></p>';
+        echo '<div id="wc-csv-error-log" style="background:#f8f8f8;border:1px solid #ddd;padding:10px;margin-top:10px;max-height:200px;overflow-y:auto;display:none;">';
+        echo '<strong>Issues detected:</strong><ul id="wc-csv-errors"></ul></div>';
         echo '<script>
-let batch = 0, total = '.absint($data['total']).', job = "'.esc_attr($job).'", batchSize = '.absint($this->batch_size).';
+let batch = 0, total = '.absint($data['total']).', job = "'.esc_attr($job).'", batchSize = '.absint($this->batch_size).', retryCount = 0, maxRetries = '.absint($this->max_retries).', imported = 0, failed = 0;
+let watchdogTimer = null;
+let batchTimeout = '.absint($this->batch_timeout * 1000).';
+
+function updateProgress(){
+    let pct = Math.round(batch / Math.ceil(total / batchSize) * 100);
+    document.getElementById("wc-csv-progress-bar").style.width = pct + "%";
+    document.getElementById("wc-csv-progress-text").textContent = "Batch " + (batch + 1) + " of " + Math.ceil(total / batchSize) + " (Imported: " + imported + ", Failed: " + failed + ")";
+    document.getElementById("wc-csv-status-details").textContent = "Processing rows " + (batch * batchSize + 1) + " - " + Math.min((batch + 1) * batchSize, total);
+}
+
+function watchdogCheck(){
+    clearTimeout(watchdogTimer);
+    watchdogTimer = setTimeout(() => {
+        console.warn("Batch timeout detected at batch " + batch + ", retrying...");
+        if(retryCount < maxRetries) {
+            retryCount++;
+            addError("Batch " + (batch + 1) + " timeout - retry " + retryCount + " of " + maxRetries);
+            next();
+        } else {
+            addError("Batch " + (batch + 1) + " failed after " + maxRetries + " retries");
+            document.getElementById("wc-csv-progress-text").textContent = "Import stalled. Watchdog detected timeout. Retrying...";
+            next();
+        }
+    }, batchTimeout);
+}
+
+function addError(msg){
+    let errorList = document.getElementById("wc-csv-errors");
+    document.getElementById("wc-csv-error-log").style.display = "block";
+    let li = document.createElement("li");
+    li.textContent = msg;
+    errorList.appendChild(li);
+}
+
 function next(){
     if(batch >= Math.ceil(total / batchSize)){
-        document.location = document.location.href;
+        clearTimeout(watchdogTimer);
+        document.getElementById("wc-csv-progress-text").textContent = "Import complete!";
+        setTimeout(() => {
+            document.location = document.location.href;
+        }, 2000);
         return;
     }
+    
+    watchdogCheck();
+    
     let formData = new FormData();
     formData.append("action", "wc_csv_feed_batch");
     formData.append("job", job);
     formData.append("batch", batch);
+    formData.append("retry", retryCount);
     formData.append("_ajax_nonce", "'.esc_attr(wp_create_nonce('wc_csv_batch')).'");
     
     fetch(ajaxurl, {
         method: "POST",
         body: formData
     }).then(r => r.json()).then(r => {
-        let pct = Math.round(batch / Math.ceil(total / batchSize) * 100);
-        document.getElementById("wc-csv-progress-bar").style.width = pct + "%";
-        document.getElementById("wc-csv-progress-text").textContent = "Batch " + (batch + 1) + " of " + Math.ceil(total / batchSize) + "...";
+        clearTimeout(watchdogTimer);
         if(r.success) {
+            imported = r.data.imported;
+            failed = r.data.failed;
+            retryCount = 0;
             batch++;
-            setTimeout(next, 1000);
+            updateProgress();
+            setTimeout(next, 500);
         } else {
             console.error("Batch error:", r.data);
-            document.getElementById("wc-csv-progress-text").textContent = "Error: " + (r.data || "Unknown error");
+            if(retryCount < maxRetries) {
+                retryCount++;
+                addError("Batch " + (batch + 1) + " error: " + (r.data || "Unknown") + " - retry " + retryCount);
+                setTimeout(next, 1000);
+            } else {
+                addError("Batch " + (batch + 1) + " failed permanently: " + (r.data || "Unknown"));
+                batch++;
+                updateProgress();
+                setTimeout(next, 2000);
+            }
         }
     }).catch(e => {
+        clearTimeout(watchdogTimer);
         console.error("Fetch error:", e);
-        document.location.href = "?page=wc-csv-feed-importer&notice=error";
+        if(retryCount < maxRetries) {
+            retryCount++;
+            addError("Network error - retry " + retryCount);
+            setTimeout(next, 1000);
+        } else {
+            document.location.href = "?page=wc-csv-feed-importer&notice=error";
+        }
     });
 }
+
+updateProgress();
 next();
 </script>';
     }
@@ -188,7 +256,7 @@ next();
         $category = sanitize_text_field($_POST['default_category'] ?? '');
         $limit = absint($_POST['preview_limit'] ?? 100);
         $token = bin2hex(random_bytes(16));
-        $summary = $this->summary($rows, $category);
+        $summary = $this->summary($rows);
         
         set_transient($this->key($token), [
             'rows' => $rows,
@@ -217,9 +285,12 @@ next();
             'category' => $data['category'],
             'total' => count($data['rows']),
             'imported' => 0,
-            'failed' => 0
+            'failed' => 0,
+            'last_successful_batch' => -1,
+            'errors' => [],
+            'started_at' => current_time('timestamp')
         ];
-        set_transient($this->job_key($job), $job_data, 3600);
+        set_transient($this->job_key($job), $job_data, 7200);
         delete_transient($key);
         $this->go(['job' => $job]);
     }
@@ -228,6 +299,9 @@ next();
         if(!current_user_can('manage_woocommerce'))wp_send_json_error('Permission denied.', 403);
         
         $job = sanitize_key(wp_unslash($_POST['job'] ?? ''));
+        $batch = absint($_POST['batch'] ?? 0);
+        $retry = absint($_POST['retry'] ?? 0);
+        
         if(!$job || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'] ?? '')), 'wc_csv_batch'))
             wp_send_json_error('Invalid request.', 403);
         
@@ -236,23 +310,76 @@ next();
         if(!is_array($data))
             wp_send_json_error('Job expired.');
         
-        $batch = absint($_POST['batch'] ?? 0);
+        // Watchdog: check if this batch was already attempted
+        if($retry === 0 && isset($data['last_successful_batch']) && $batch <= $data['last_successful_batch']){
+            // Skip already completed batches
+            wp_send_json_success(['batch' => $batch, 'imported' => $data['imported'], 'failed' => $data['failed'], 'skipped' => true]);
+        }
+        
         $start = $batch * $this->batch_size;
         $end = $start + $this->batch_size;
         $rows = array_slice($data['rows'], $start, $this->batch_size);
         
+        if(empty($rows)){
+            wp_send_json_error('No rows to process.');
+        }
+        
         // Increase time limit for batch processing
         set_time_limit(120);
         
-        foreach($rows as $row){
-            if($this->save_row($row, $data['status'], $data['category']))
-                $data['imported']++;
-            else
+        $batch_imported = 0;
+        $batch_failed = 0;
+        
+        foreach($rows as $idx => $row){
+            try {
+                if($this->save_row($row, $data['status'], $data['category'])){
+                    $batch_imported++;
+                    $data['imported']++;
+                } else {
+                    $batch_failed++;
+                    $data['failed']++;
+                }
+            } catch(\Exception $e){
+                $batch_failed++;
                 $data['failed']++;
+                $data['errors'][] = 'Row ' . ($start + $idx + 1) . ': ' . $e->getMessage();
+            }
         }
         
-        set_transient($key, $data, 3600);
-        wp_send_json_success(['batch' => $batch, 'imported' => $data['imported'], 'failed' => $data['failed']]);
+        // Update watchdog marker
+        $data['last_successful_batch'] = $batch;
+        set_transient($key, $data, 7200);
+        
+        wp_send_json_success([
+            'batch' => $batch, 
+            'imported' => $data['imported'], 
+            'failed' => $data['failed'],
+            'batch_imported' => $batch_imported,
+            'batch_failed' => $batch_failed
+        ]);
+    }
+
+    public function watchdog() {
+        if(!current_user_can('manage_woocommerce'))wp_send_json_error('Permission denied.', 403);
+        
+        $job = sanitize_key(wp_unslash($_POST['job'] ?? ''));
+        if(!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'] ?? '')), 'wc_csv_watchdog'))
+            wp_send_json_error('Invalid request.', 403);
+        
+        $key = $this->job_key($job);
+        $data = get_transient($key);
+        if(!is_array($data))
+            wp_send_json_error('Job expired.');
+        
+        $elapsed = current_time('timestamp') - ($data['started_at'] ?? time());
+        
+        wp_send_json_success([
+            'status' => 'running',
+            'imported' => $data['imported'],
+            'failed' => $data['failed'],
+            'elapsed' => $elapsed,
+            'errors_count' => count($data['errors'] ?? [])
+        ]);
     }
 
     private function read_csv($path, $mapping){
