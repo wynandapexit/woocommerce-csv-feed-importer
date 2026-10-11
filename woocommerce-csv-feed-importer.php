@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce CSV Product Feed Importer
  * Description: Preview-first WooCommerce CSV importer with automatic mapping, saved presets, dry-run summaries and batched imports.
- * Version: 1.5.3
+ * Version: 1.5.4
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
@@ -16,8 +16,8 @@ final class WC_CSV_Product_Feed_Importer {
     private $max_retries = 3;
     private $fields = ['name'=>'ProductName','sku'=>'ProductCode','category'=>'Category','description'=>'ProductSummary','price'=>'Price','stock'=>'AvailableQty','image'=>'Image'];
 
-    public static function instance() { 
-        return self::$instance ?: (self::$instance = new self()); 
+    public static function instance() {
+        return self::$instance ?: (self::$instance = new self());
     }
 
     private function __construct() {
@@ -28,8 +28,8 @@ final class WC_CSV_Product_Feed_Importer {
         add_action('wp_ajax_wc_csv_feed_watchdog', [$this,'watchdog']);
     }
 
-    public function admin_menu() { 
-        add_submenu_page('woocommerce','CSV Feed Importer','CSV Feed Importer','manage_woocommerce','wc-csv-feed-importer',[$this,'page']); 
+    public function admin_menu() {
+        add_submenu_page('woocommerce','CSV Feed Importer','CSV Feed Importer','manage_woocommerce','wc-csv-feed-importer',[$this,'page']);
     }
 
     public function page() {
@@ -41,8 +41,8 @@ final class WC_CSV_Product_Feed_Importer {
         if ('error' === $notice) echo '<div class="notice notice-error"><p>Could not read the CSV feed or the preview expired.</p></div>';
         if ('success' === $notice) echo '<div class="notice notice-success"><p>' . esc_html(sprintf('%d product(s) imported.',absint($_GET['imported'] ?? 0))) . '</p></div>';
         if ('partial' === $notice) echo '<div class="notice notice-warning"><p>' . esc_html(sprintf('%d product(s) imported; some rows failed. Check the PHP error log.',absint($_GET['imported'] ?? 0))) . '</p></div>';
-        if ($job) $this->render_progress($job); 
-        elseif ($preview) $this->render_preview($preview); 
+        if ($job) $this->render_progress($job);
+        elseif ($preview) $this->render_preview($preview);
         else $this->render_form();
         echo '</div>';
     }
@@ -52,7 +52,7 @@ final class WC_CSV_Product_Feed_Importer {
         $mapping = is_array($saved) ? wp_parse_args($saved,$this->fields) : $this->fields;
         echo '<p>Upload the feed, review the automatic mapping and dry-run summary, then import in batches of ' . absint($this->batch_size) . '.</p>';
         echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'" enctype="multipart/form-data">';
-        wp_nonce_field('wc_csv_product_feed_import'); 
+        wp_nonce_field('wc_csv_product_feed_import');
         echo '<input type="hidden" name="action" value="wc_csv_product_feed_import">';
         echo '<table class="form-table"><tbody>';
         echo '<tr><th>CSV Feed URL</th><td><input type="url" class="regular-text" name="csv_feed_url" placeholder="https://example.com/products.csv"><p class="description">Use this or upload a file below.</p></td></tr>';
@@ -71,27 +71,26 @@ final class WC_CSV_Product_Feed_Importer {
         }
         echo '</select></td></tr>';
         echo '<tr><th>Preview row limit</th><td><input type="number" name="preview_limit" min="1" max="1000" value="100" class="small-text"></td></tr>';
-        echo '</tbody></table>'; 
+        echo '</tbody></table>';
         submit_button('Preview Import');
         echo '</form>';
     }
 
     private function render_preview($token) {
         $data = get_transient($this->key($token));
-        if (!is_array($data) || empty($data['rows'])) { 
-            echo '<div class="notice notice-error"><p>This preview expired. Please start again.</p></div>'; 
-            return; 
+        if (!is_array($data) || empty($data['rows'])) {
+            echo '<div class="notice notice-error"><p>This preview expired. Please start again.</p></div>';
+            return;
         }
         $rows = $data['rows'];
         $s = $data['summary'];
         $validation = $data['validation'] ?? [];
         $limit = max(1, min(1000, absint($data['limit'])));
-        
+
         echo '<h2>Import Preview</h2>';
         echo '<p>Showing '.esc_html(min(count($rows), $limit)).' of '.esc_html(count($rows)).' rows. No products have been saved.</p>';
         echo '<p><strong>Detected mapping:</strong> '.esc_html(json_encode($data['mapping'])).'</p>';
-        
-        // Display validation warnings/errors
+
         if(!empty($validation['errors']) || !empty($validation['warnings'])){
             if(!empty($validation['errors'])){
                 echo '<div class="notice notice-error"><p><strong>Critical Issues Found:</strong></p><ul>';
@@ -110,19 +109,19 @@ final class WC_CSV_Product_Feed_Importer {
         } else {
             echo '<div class="notice notice-success"><p>✓ CSV structure and format validated successfully.</p></div>';
         }
-        
+
         echo '<div class="postbox"><h2 class="hndle">Summary</h2><div class="inside"><ul>';
         foreach(['Rows skipped'=>'skipped','Duplicate SKUs'=>'duplicates','Invalid prices'=>'invalid_prices','Missing image URLs'=>'missing_images','Would create'=>'create','Would update'=>'update'] as $label=>$key) {
             echo '<li>'.esc_html($label.': '.absint($s[$key])).'</li>';
         }
         echo '</ul></div></div>';
-        
+
         echo '<table class="widefat striped"><thead><tr><th>#</th><th>Product</th><th>SKU</th><th>Category</th><th>Price</th><th>Quantity</th><th>Image</th><th>Status</th></tr></thead><tbody>';
         foreach(array_slice($rows, 0, $limit) as $i => $row) {
             $row_issues = $data['row_issues'][$i] ?? [];
             $status_class = empty($row_issues['errors']) ? 'success' : 'error';
             $status_icon = empty($row_issues['errors']) ? '✓' : '⚠';
-            
+
             echo '<tr>';
             echo '<td>'.esc_html($i+1).'</td>';
             echo '<td>'.esc_html($row['name']).'</td>';
@@ -140,10 +139,10 @@ final class WC_CSV_Product_Feed_Importer {
         }
         echo '</tbody></table>';
         echo '<p><strong>Status:</strong> '.esc_html($data['status']).' &nbsp; <strong>Default category:</strong> '.esc_html($data['category'] ?: 'None').'</p>';
-        
+
         if(empty($validation['errors'])){
             echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'">';
-            wp_nonce_field('wc_csv_feed_confirm_'.$token); 
+            wp_nonce_field('wc_csv_feed_confirm_'.$token);
             echo '<input type="hidden" name="action" value="wc_csv_product_feed_confirm">';
             echo '<input type="hidden" name="preview_token" value="'.esc_attr($token).'">';
             submit_button('Begin Import');
@@ -155,9 +154,9 @@ final class WC_CSV_Product_Feed_Importer {
 
     private function render_progress($job) {
         $data = get_transient($this->job_key($job));
-        if (!is_array($data)) { 
-            echo '<div class="notice notice-error"><p>This import job expired.</p></div>'; 
-            return; 
+        if (!is_array($data)) {
+            echo '<div class="notice notice-error"><p>This import job expired.</p></div>';
+            return;
         }
         echo '<h2>Importing products</h2>';
         echo '<div style="max-width:760px;background:#dcdcde;height:28px;border-radius:4px;overflow:hidden">';
@@ -211,16 +210,16 @@ function next(){
         }, 2000);
         return;
     }
-    
+
     watchdogCheck();
-    
+
     let formData = new FormData();
     formData.append("action", "wc_csv_feed_batch");
     formData.append("job", job);
     formData.append("batch", batch);
     formData.append("retry", retryCount);
     formData.append("_ajax_nonce", "'.esc_attr(wp_create_nonce('wc_csv_batch')).'");
-    
+
     fetch(ajaxurl, {
         method: "POST",
         body: formData
@@ -265,15 +264,15 @@ next();
     }
 
     public function handle_import() {
-        if(!current_user_can('manage_woocommerce'))wp_die('Permission denied.'); 
-        check_admin_referer('wc_csv_product_feed_import'); 
+        if(!current_user_can('manage_woocommerce'))wp_die('Permission denied.');
+        check_admin_referer('wc_csv_product_feed_import');
         $mapping = $this->mapping($_POST['mapping'] ?? []);
         $rows = [];
         $file = $_FILES['csv_file'] ?? [];
-        
+
         if(!empty($file['error']) && UPLOAD_ERR_NO_FILE !== (int)$file['error'])
             wp_die('CSV upload failed.');
-        
+
         if(!empty($file['tmp_name']) && is_uploaded_file($file['tmp_name']))
             $rows = $this->read_csv($file['tmp_name'], $mapping);
         else {
@@ -291,26 +290,24 @@ next();
                 }
             }
         }
-        
-        if(!$rows)$this->go(['notice'=>'error']); 
+
+        if(!$rows)$this->go(['notice'=>'error']);
         if(!empty($_POST['save_mapping']))
             update_user_meta(get_current_user_id(), 'wc_csv_feed_mapping', $mapping);
-        
+
         $status = sanitize_key($_POST['product_status'] ?? 'publish');
         $category = sanitize_text_field($_POST['default_category'] ?? '');
         $limit = absint($_POST['preview_limit'] ?? 100);
         $token = bin2hex(random_bytes(16));
         $summary = $this->summary($rows);
-        
-        // Run comprehensive validation on all rows
+
         $validation = $this->validate_csv($rows, $mapping);
-        
-        // Analyze each row for issues
+
         $row_issues = [];
         foreach($rows as $idx => $row){
             $row_issues[$idx] = $this->validate_row($row);
         }
-        
+
         set_transient($this->key($token), [
             'rows' => $rows,
             'mapping' => $mapping,
@@ -321,33 +318,27 @@ next();
             'validation' => $validation,
             'row_issues' => $row_issues
         ], 3600);
-        
+
         $this->go(['preview' => $token]);
     }
 
-    /**
-     * Comprehensive CSV validation at the file level
-     */
     private function validate_csv($rows, $mapping) {
         $errors = [];
         $warnings = [];
-        
-        // Check if CSV is empty
+
         if(empty($rows)){
             $errors[] = 'CSV file contains no data rows.';
             return ['errors' => $errors, 'warnings' => $warnings];
         }
-        
-        // Check if required fields (name/sku) are present in mapping
+
         if(empty($mapping['name']) || empty($mapping['sku'])){
             $errors[] = 'Required fields "name" and "sku" must be mapped to columns in your CSV.';
         }
-        
-        // Check for duplicate SKUs across entire file
+
         $skus = [];
         $sku_duplicates = [];
         foreach($rows as $idx => $row){
-            $sku = strtoupper(trim($row['sku']));
+            $sku = strtoupper(trim((string)($row['sku'] ?? '')));
             if($sku && isset($skus[$sku])){
                 if(!isset($sku_duplicates[$sku])){
                     $sku_duplicates[$sku] = [$skus[$sku]];
@@ -356,36 +347,37 @@ next();
             }
             if($sku) $skus[$sku] = $idx;
         }
-        
+
         if(!empty($sku_duplicates)){
             foreach($sku_duplicates as $sku => $indices){
-                $warnings[] = 'SKU "'.esc_html($sku).'" appears '.count($indices).' times (rows: '.implode(', ', array_map(function($i){ return $i + 1; }, $indices)).'). Only the first will be imported.';
+                $warnings[] = 'SKU "'.$sku.'" appears '.count($indices).' times (rows: '.implode(', ', array_map(function($i){ return $i + 1; }, $indices)).'). Only the first will be imported.';
             }
         }
-        
-        // Check for rows with missing critical data
+
         $critical_missing = 0;
         foreach($rows as $idx => $row){
-            if(empty(trim($row['name'])) || empty(trim($row['sku']))){
+            if(empty(trim((string)($row['name'] ?? ''))) || empty(trim((string)($row['sku'] ?? '')))){
                 $critical_missing++;
             }
         }
-        
+
         if($critical_missing > 0){
             $warnings[] = $critical_missing . ' row(s) have missing product name or SKU and will be skipped.';
         }
-        
-        // Check for encoding issues
-        foreach($rows as $idx => $row){
-            foreach($row as $value){
-                if(!mb_check_encoding($value, 'UTF-8')){
-                    $errors[] = 'Encoding error detected in row ' . ($idx + 1) . '. Please ensure your CSV is UTF-8 encoded.';
-                    break 2;
+
+        if(function_exists('mb_check_encoding')){
+            foreach($rows as $idx => $row){
+                foreach($row as $value){
+                    if(!mb_check_encoding((string)$value, 'UTF-8')){
+                        $errors[] = 'Encoding error detected in row ' . ($idx + 1) . '. Please ensure your CSV is UTF-8 encoded.';
+                        break 2;
+                    }
                 }
             }
+        } else {
+            $warnings[] = 'UTF-8 validation skipped because the mbstring extension is not installed on this server.';
         }
-        
-        // Check for inconsistent row lengths (column count mismatch)
+
         $expected_cols = null;
         foreach($rows as $idx => $row){
             $cols = count($row);
@@ -395,54 +387,41 @@ next();
                 $warnings[] = 'Row ' . ($idx + 1) . ' has ' . $cols . ' columns, but expected ' . $expected_cols . '. Extra columns will be ignored.';
             }
         }
-        
-        // Warn about large imports
+
         if(count($rows) > 1000){
             $warnings[] = 'This CSV contains ' . count($rows) . ' rows. Large imports may take several minutes. Please keep the browser window open.';
         }
-        
+
         return ['errors' => $errors, 'warnings' => $warnings];
     }
 
-    /**
-     * Validate individual row for data issues
-     */
     private function validate_row($row) {
         $issues = ['errors' => [], 'warnings' => []];
-        
-        $name = trim($row['name']);
-        $sku = trim($row['sku']);
-        $price = $row['price'];
-        $image = $row['image'];
-        
-        // Check for empty required fields
+
+        $name = trim((string)($row['name'] ?? ''));
+        $sku = trim((string)($row['sku'] ?? ''));
+        $price = $row['price'] ?? '';
+        $image = $row['image'] ?? '';
+
         if(empty($name)){
             $issues['errors'][] = 'Missing product name';
         }
         if(empty($sku)){
             $issues['errors'][] = 'Missing SKU';
         }
-        
-        // Check price format
         if($price !== '' && !$this->decimal($price)){
             $issues['errors'][] = 'Invalid price format';
         }
-        
-        // Check image URL validity
         if($image !== '' && !$this->valid_url($image)){
             $issues['warnings'][] = 'Invalid image URL';
         }
-        
-        // Warn about long product names
         if(strlen($name) > 200){
             $issues['warnings'][] = 'Product name exceeds 200 characters (will be truncated)';
         }
-        
-        // Warn about special characters in SKU
-        if(preg_match('/[<>"%{}|\\\\^\[\]`]/', $sku)){
+        if(preg_match('/[<>"%{}|\\^\[\]`]/', $sku)){
             $issues['warnings'][] = 'SKU contains special characters that may cause issues';
         }
-        
+
         return $issues;
     }
 
@@ -453,7 +432,7 @@ next();
         $key = $this->key($token);
         $data = get_transient($key);
         if(!is_array($data))$this->go(['notice'=>'error']);
-        
+
         $job = bin2hex(random_bytes(8));
         $job_data = [
             'rows' => $data['rows'],
@@ -473,36 +452,35 @@ next();
 
     public function ajax_batch() {
         if(!current_user_can('manage_woocommerce'))wp_send_json_error('Permission denied.', 403);
-        
+
         $job = sanitize_key(wp_unslash($_POST['job'] ?? ''));
         $batch = absint($_POST['batch'] ?? 0);
         $retry = absint($_POST['retry'] ?? 0);
-        
+
         if(!$job || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'] ?? '')), 'wc_csv_batch'))
             wp_send_json_error('Invalid request.', 403);
-        
+
         $key = $this->job_key($job);
         $data = get_transient($key);
         if(!is_array($data))
             wp_send_json_error('Job expired.');
-        
+
         if($retry === 0 && isset($data['last_successful_batch']) && $batch <= $data['last_successful_batch']){
             wp_send_json_success(['batch' => $batch, 'imported' => $data['imported'], 'failed' => $data['failed'], 'skipped' => true]);
         }
-        
+
         $start = $batch * $this->batch_size;
-        $end = $start + $this->batch_size;
         $rows = array_slice($data['rows'], $start, $this->batch_size);
-        
+
         if(empty($rows)){
             wp_send_json_error('No rows to process.');
         }
-        
+
         set_time_limit(120);
-        
+
         $batch_imported = 0;
         $batch_failed = 0;
-        
+
         foreach($rows as $idx => $row){
             try {
                 if($this->save_row($row, $data['status'], $data['category'])){
@@ -518,13 +496,13 @@ next();
                 $data['errors'][] = 'Row ' . ($start + $idx + 1) . ': ' . $e->getMessage();
             }
         }
-        
+
         $data['last_successful_batch'] = $batch;
         set_transient($key, $data, 7200);
-        
+
         wp_send_json_success([
-            'batch' => $batch, 
-            'imported' => $data['imported'], 
+            'batch' => $batch,
+            'imported' => $data['imported'],
             'failed' => $data['failed'],
             'batch_imported' => $batch_imported,
             'batch_failed' => $batch_failed
@@ -533,18 +511,18 @@ next();
 
     public function watchdog() {
         if(!current_user_can('manage_woocommerce'))wp_send_json_error('Permission denied.', 403);
-        
+
         $job = sanitize_key(wp_unslash($_POST['job'] ?? ''));
         if(!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['_ajax_nonce'] ?? '')), 'wc_csv_watchdog'))
             wp_send_json_error('Invalid request.', 403);
-        
+
         $key = $this->job_key($job);
         $data = get_transient($key);
         if(!is_array($data))
             wp_send_json_error('Job expired.');
-        
+
         $elapsed = current_time('timestamp') - ($data['started_at'] ?? time());
-        
+
         wp_send_json_success([
             'status' => 'running',
             'imported' => $data['imported'],
@@ -557,25 +535,25 @@ next();
     private function read_csv($path, $mapping){
         if(!is_readable($path) || false === ($h = fopen($path, 'rb')))
             return [];
-        
+
         $headers = fgetcsv($h, 0, ',', '"');
         if(!$headers){
             fclose($h);
             return [];
         }
-        
+
         $normalized = array_map([$this,'norm'], $headers);
         $detected = $this->detect_mapping($normalized, $mapping);
         $rows = [];
-        
+
         while(false !== ($row = fgetcsv($h, 0, ',', '"'))){
             if(count($row) < count($headers))
                 $row = array_pad($row, count($headers), '');
-            
+
             $data = [];
             foreach($detected as $field => $col){
                 $idx = array_search($this->norm($col), $normalized);
-                $data[$field] = $idx !== false ? trim($row[$idx]) : '';
+                $data[$field] = $idx !== false ? trim((string)$row[$idx]) : '';
             }
             $rows[] = $data;
         }
@@ -593,7 +571,7 @@ next();
             'stock' => ['stock','quantity','availableqty','qty'],
             'image' => ['image','url','imageurl','productimage']
         ];
-        
+
         foreach($aliases as $field => $options){
             foreach($options as $alias){
                 if(in_array($this->norm($alias), $headers))
@@ -606,32 +584,32 @@ next();
     private function summary($rows){
         $s = ['skipped'=>0,'duplicates'=>0,'invalid_prices'=>0,'missing_images'=>0,'create'=>0,'update'=>0];
         $seen = [];
-        
+
         foreach($rows as $r){
-            $name = trim($r['name']);
-            $sku = strtoupper(trim($r['sku']));
-            
+            $name = trim((string)($r['name'] ?? ''));
+            $sku = strtoupper(trim((string)($r['sku'] ?? '')));
+
             if(!$name || !$sku){
                 $s['skipped']++;
                 continue;
             }
-            
+
             if(isset($seen[$sku])){
                 $s['duplicates']++;
                 continue;
             }
             $seen[$sku] = 1;
-            
-            if($r['price'] !== '' && !$this->decimal($r['price'])){
+
+            if(($r['price'] ?? '') !== '' && !$this->decimal($r['price'])){
                 $s['invalid_prices']++;
                 continue;
             }
-            
-            if($r['image'] !== '' && !$this->valid_url($r['image'])){
+
+            if(($r['image'] ?? '') !== '' && !$this->valid_url($r['image'])){
                 $s['missing_images']++;
                 continue;
             }
-            
+
             $id = $sku && function_exists('wc_get_product_id_by_sku') ? wc_get_product_id_by_sku($sku) : 0;
             $s[$id ? 'update' : 'create']++;
         }
@@ -641,26 +619,26 @@ next();
     private function save_row($r, $status, $default_category){
         if(!$r['name'] || ($r['price'] !== '' && !$this->decimal($r['price'])))
             return false;
-        
-        $sku = trim($r['sku']);
+
+        $sku = trim((string)($r['sku'] ?? ''));
         $id = $sku && function_exists('wc_get_product_id_by_sku') ? wc_get_product_id_by_sku($sku) : 0;
-        
+
         if($id){
             $product = wc_get_product($id);
         } else {
             $product = new WC_Product();
         }
-        
+
         if(!$product)
             return false;
-        
-        $product->set_name(trim($r['name']));
+
+        $product->set_name(trim((string)($r['name'] ?? '')));
         $product->set_sku($sku);
-        
-        if($r['price'] !== '')
+
+        if(($r['price'] ?? '') !== '')
             $product->set_regular_price($this->decimal($r['price']));
-        
-        if($r['category']){
+
+        if(!empty($r['category'])){
             $cat = $r['category'];
             $term = get_term_by('name', $cat, 'product_cat');
             if(!$term){
@@ -675,22 +653,22 @@ next();
             if(!is_wp_error($term) && isset($term['term_id']))
                 $product->set_category_ids([$term['term_id']]);
         }
-        
-        if($r['description'])
+
+        if(!empty($r['description']))
             $product->set_description($r['description']);
-        
-        if($r['stock'] !== ''){
+
+        if(isset($r['stock']) && $r['stock'] !== ''){
             $stock = absint($r['stock']);
             $product->set_stock_quantity($stock);
             $product->set_manage_stock(true);
         }
-        
-        if($r['image'] && $this->valid_url($r['image'])){
+
+        if(!empty($r['image']) && $this->valid_url($r['image'])){
             $img_id = $this->image($r['image'], $product->get_id());
             if($img_id)
                 $product->set_image_id($img_id);
         }
-        
+
         $product->set_status($status);
         return (bool)$product->save();
     }
