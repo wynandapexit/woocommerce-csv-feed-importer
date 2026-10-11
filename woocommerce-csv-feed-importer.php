@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce CSV Product Feed Importer
  * Description: Preview-first WooCommerce CSV importer with automatic mapping, saved presets, dry-run summaries and batched imports.
- * Version: 1.5.2
+ * Version: 1.5.3
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
@@ -11,9 +11,9 @@ if (!defined('ABSPATH')) { exit; }
 
 final class WC_CSV_Product_Feed_Importer {
     private static $instance;
-    private $batch_size = 5; // Smaller batches for reliability
-    private $batch_timeout = 30; // seconds per batch before considering it stalled
-    private $max_retries = 3; // retry a batch up to 3 times
+    private $batch_size = 5;
+    private $batch_timeout = 30;
+    private $max_retries = 3;
     private $fields = ['name'=>'ProductName','sku'=>'ProductCode','category'=>'Category','description'=>'ProductSummary','price'=>'Price','stock'=>'AvailableQty','image'=>'Image'];
 
     public static function instance() { 
@@ -84,29 +84,73 @@ final class WC_CSV_Product_Feed_Importer {
         }
         $rows = $data['rows'];
         $s = $data['summary'];
+        $validation = $data['validation'] ?? [];
         $limit = max(1, min(1000, absint($data['limit'])));
+        
         echo '<h2>Import Preview</h2>';
         echo '<p>Showing '.esc_html(min(count($rows), $limit)).' of '.esc_html(count($rows)).' rows. No products have been saved.</p>';
         echo '<p><strong>Detected mapping:</strong> '.esc_html(json_encode($data['mapping'])).'</p>';
+        
+        // Display validation warnings/errors
+        if(!empty($validation['errors']) || !empty($validation['warnings'])){
+            if(!empty($validation['errors'])){
+                echo '<div class="notice notice-error"><p><strong>Critical Issues Found:</strong></p><ul>';
+                foreach($validation['errors'] as $error){
+                    echo '<li>'.esc_html($error).'</li>';
+                }
+                echo '</ul><p style="color:#d63638;font-weight:bold;">Please fix these issues before importing.</p></div>';
+            }
+            if(!empty($validation['warnings'])){
+                echo '<div class="notice notice-warning"><p><strong>Warnings (non-blocking):</strong></p><ul>';
+                foreach($validation['warnings'] as $warning){
+                    echo '<li>'.esc_html($warning).'</li>';
+                }
+                echo '</ul></div>';
+            }
+        } else {
+            echo '<div class="notice notice-success"><p>✓ CSV structure and format validated successfully.</p></div>';
+        }
+        
         echo '<div class="postbox"><h2 class="hndle">Summary</h2><div class="inside"><ul>';
         foreach(['Rows skipped'=>'skipped','Duplicate SKUs'=>'duplicates','Invalid prices'=>'invalid_prices','Missing image URLs'=>'missing_images','Would create'=>'create','Would update'=>'update'] as $label=>$key) {
             echo '<li>'.esc_html($label.': '.absint($s[$key])).'</li>';
         }
         echo '</ul></div></div>';
-        echo '<table class="widefat striped"><thead><tr><th>#</th><th>Product</th><th>SKU</th><th>Category</th><th>Price</th><th>Quantity</th><th>Image</th></tr></thead><tbody>';
+        
+        echo '<table class="widefat striped"><thead><tr><th>#</th><th>Product</th><th>SKU</th><th>Category</th><th>Price</th><th>Quantity</th><th>Image</th><th>Status</th></tr></thead><tbody>';
         foreach(array_slice($rows, 0, $limit) as $i => $row) {
-            echo '<tr><td>'.esc_html($i+1).'</td><td>'.esc_html($row['name']).'</td><td>'.esc_html($row['sku']).'</td><td>'.esc_html($row['category']).'</td>';
-            echo '<td>'.esc_html(number_format((float)($row['price']??0), 2)).'</td><td>'.esc_html($row['stock']).'</td>';
-            echo '<td>'.($row['image'] ? '<a href="'.esc_url($row['image']).'" target="_blank">View</a>' : '—').'</td></tr>';
+            $row_issues = $data['row_issues'][$i] ?? [];
+            $status_class = empty($row_issues['errors']) ? 'success' : 'error';
+            $status_icon = empty($row_issues['errors']) ? '✓' : '⚠';
+            
+            echo '<tr>';
+            echo '<td>'.esc_html($i+1).'</td>';
+            echo '<td>'.esc_html($row['name']).'</td>';
+            echo '<td>'.esc_html($row['sku']).'</td>';
+            echo '<td>'.esc_html($row['category']).'</td>';
+            echo '<td>'.esc_html(number_format((float)($row['price']??0), 2)).'</td>';
+            echo '<td>'.esc_html($row['stock']).'</td>';
+            echo '<td>'.($row['image'] ? '<a href="'.esc_url($row['image']).'" target="_blank">View</a>' : '—').'</td>';
+            echo '<td style="font-weight:bold;color:'.($status_class === 'success' ? '#28a745' : '#dc3545').'">'.$status_icon;
+            if(!empty($row_issues['errors'])){
+                echo '<br><small style="display:block;margin-top:5px;color:#666;">'.esc_html(implode(', ', $row_issues['errors'])).'</small>';
+            }
+            echo '</td>';
+            echo '</tr>';
         }
         echo '</tbody></table>';
         echo '<p><strong>Status:</strong> '.esc_html($data['status']).' &nbsp; <strong>Default category:</strong> '.esc_html($data['category'] ?: 'None').'</p>';
-        echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'">';
-        wp_nonce_field('wc_csv_feed_confirm_'.$token); 
-        echo '<input type="hidden" name="action" value="wc_csv_product_feed_confirm">';
-        echo '<input type="hidden" name="preview_token" value="'.esc_attr($token).'">';
-        submit_button('Begin Import');
-        echo '</form>';
+        
+        if(empty($validation['errors'])){
+            echo '<form method="post" action="'.esc_url(admin_url('admin-post.php')).'">';
+            wp_nonce_field('wc_csv_feed_confirm_'.$token); 
+            echo '<input type="hidden" name="action" value="wc_csv_product_feed_confirm">';
+            echo '<input type="hidden" name="preview_token" value="'.esc_attr($token).'">';
+            submit_button('Begin Import');
+            echo '</form>';
+        } else {
+            echo '<p style="color:#d63638;font-weight:bold;">Cannot proceed with import due to critical formatting errors. Please review the CSV file and try again.</p>';
+        }
     }
 
     private function render_progress($job) {
@@ -258,16 +302,148 @@ next();
         $token = bin2hex(random_bytes(16));
         $summary = $this->summary($rows);
         
+        // Run comprehensive validation on all rows
+        $validation = $this->validate_csv($rows, $mapping);
+        
+        // Analyze each row for issues
+        $row_issues = [];
+        foreach($rows as $idx => $row){
+            $row_issues[$idx] = $this->validate_row($row);
+        }
+        
         set_transient($this->key($token), [
             'rows' => $rows,
             'mapping' => $mapping,
             'summary' => $summary,
             'status' => $status,
             'category' => $category,
-            'limit' => $limit
+            'limit' => $limit,
+            'validation' => $validation,
+            'row_issues' => $row_issues
         ], 3600);
         
         $this->go(['preview' => $token]);
+    }
+
+    /**
+     * Comprehensive CSV validation at the file level
+     */
+    private function validate_csv($rows, $mapping) {
+        $errors = [];
+        $warnings = [];
+        
+        // Check if CSV is empty
+        if(empty($rows)){
+            $errors[] = 'CSV file contains no data rows.';
+            return ['errors' => $errors, 'warnings' => $warnings];
+        }
+        
+        // Check if required fields (name/sku) are present in mapping
+        if(empty($mapping['name']) || empty($mapping['sku'])){
+            $errors[] = 'Required fields "name" and "sku" must be mapped to columns in your CSV.';
+        }
+        
+        // Check for duplicate SKUs across entire file
+        $skus = [];
+        $sku_duplicates = [];
+        foreach($rows as $idx => $row){
+            $sku = strtoupper(trim($row['sku']));
+            if($sku && isset($skus[$sku])){
+                if(!isset($sku_duplicates[$sku])){
+                    $sku_duplicates[$sku] = [$skus[$sku]];
+                }
+                $sku_duplicates[$sku][] = $idx;
+            }
+            if($sku) $skus[$sku] = $idx;
+        }
+        
+        if(!empty($sku_duplicates)){
+            foreach($sku_duplicates as $sku => $indices){
+                $warnings[] = 'SKU "'.esc_html($sku).'" appears '.count($indices).' times (rows: '.implode(', ', array_map(function($i){ return $i + 1; }, $indices)).'). Only the first will be imported.';
+            }
+        }
+        
+        // Check for rows with missing critical data
+        $critical_missing = 0;
+        foreach($rows as $idx => $row){
+            if(empty(trim($row['name'])) || empty(trim($row['sku']))){
+                $critical_missing++;
+            }
+        }
+        
+        if($critical_missing > 0){
+            $warnings[] = $critical_missing . ' row(s) have missing product name or SKU and will be skipped.';
+        }
+        
+        // Check for encoding issues
+        foreach($rows as $idx => $row){
+            foreach($row as $value){
+                if(!mb_check_encoding($value, 'UTF-8')){
+                    $errors[] = 'Encoding error detected in row ' . ($idx + 1) . '. Please ensure your CSV is UTF-8 encoded.';
+                    break 2;
+                }
+            }
+        }
+        
+        // Check for inconsistent row lengths (column count mismatch)
+        $expected_cols = null;
+        foreach($rows as $idx => $row){
+            $cols = count($row);
+            if($expected_cols === null){
+                $expected_cols = $cols;
+            } elseif($cols !== $expected_cols){
+                $warnings[] = 'Row ' . ($idx + 1) . ' has ' . $cols . ' columns, but expected ' . $expected_cols . '. Extra columns will be ignored.';
+            }
+        }
+        
+        // Warn about large imports
+        if(count($rows) > 1000){
+            $warnings[] = 'This CSV contains ' . count($rows) . ' rows. Large imports may take several minutes. Please keep the browser window open.';
+        }
+        
+        return ['errors' => $errors, 'warnings' => $warnings];
+    }
+
+    /**
+     * Validate individual row for data issues
+     */
+    private function validate_row($row) {
+        $issues = ['errors' => [], 'warnings' => []];
+        
+        $name = trim($row['name']);
+        $sku = trim($row['sku']);
+        $price = $row['price'];
+        $image = $row['image'];
+        
+        // Check for empty required fields
+        if(empty($name)){
+            $issues['errors'][] = 'Missing product name';
+        }
+        if(empty($sku)){
+            $issues['errors'][] = 'Missing SKU';
+        }
+        
+        // Check price format
+        if($price !== '' && !$this->decimal($price)){
+            $issues['errors'][] = 'Invalid price format';
+        }
+        
+        // Check image URL validity
+        if($image !== '' && !$this->valid_url($image)){
+            $issues['warnings'][] = 'Invalid image URL';
+        }
+        
+        // Warn about long product names
+        if(strlen($name) > 200){
+            $issues['warnings'][] = 'Product name exceeds 200 characters (will be truncated)';
+        }
+        
+        // Warn about special characters in SKU
+        if(preg_match('/[<>"%{}|\\\\^\[\]`]/', $sku)){
+            $issues['warnings'][] = 'SKU contains special characters that may cause issues';
+        }
+        
+        return $issues;
     }
 
     public function confirm_import() {
@@ -310,9 +486,7 @@ next();
         if(!is_array($data))
             wp_send_json_error('Job expired.');
         
-        // Watchdog: check if this batch was already attempted
         if($retry === 0 && isset($data['last_successful_batch']) && $batch <= $data['last_successful_batch']){
-            // Skip already completed batches
             wp_send_json_success(['batch' => $batch, 'imported' => $data['imported'], 'failed' => $data['failed'], 'skipped' => true]);
         }
         
@@ -324,7 +498,6 @@ next();
             wp_send_json_error('No rows to process.');
         }
         
-        // Increase time limit for batch processing
         set_time_limit(120);
         
         $batch_imported = 0;
@@ -346,7 +519,6 @@ next();
             }
         }
         
-        // Update watchdog marker
         $data['last_successful_batch'] = $batch;
         set_transient($key, $data, 7200);
         
