@@ -55,7 +55,7 @@ final class WC_CSV_Product_Feed_Importer {
         wp_nonce_field('wc_csv_product_feed_import');
         echo '<input type="hidden" name="action" value="wc_csv_product_feed_import">';
         echo '<table class="form-table"><tbody>';
-        echo '<tr><th>CSV Feed URL</th><td><input type="url" class="regular-text" name="csv_feed_url" placeholder="https://example.com/products.csv"><p class="description">Use this or upload a file below.</p></td></tr>';
+        echo '<tr><th>CSV Feed URL</th><td><input type="url" class="regular-text" name="csv_feed_url" placeholder="https://example.com/products.csv"><p class="description">Use this or upload a file.</p></td></tr>';
         echo '<tr><th>CSV File</th><td><input type="file" name="csv_file" accept=".csv"></td></tr>';
         echo '<tr><th colspan="2">Field Mapping</th></tr>';
         foreach ($this->fields as $field=>$default) {
@@ -111,7 +111,7 @@ final class WC_CSV_Product_Feed_Importer {
         }
 
         echo '<div class="postbox"><h2 class="hndle">Summary</h2><div class="inside"><ul>';
-        foreach(['Rows skipped'=>'skipped','Duplicate SKUs'=>'duplicates','Invalid prices'=>'invalid_prices','Missing image URLs'=>'missing_images','Would create'=>'create','Would update'=>'update'] as $label=>$key) {
+        foreach(['Rows skipped'=>'skipped','Duplicate SKUs'=>'duplicates','Invalid prices'=>'invalid_prices','Missing image URLs'=>'missing_images','Would create'=>'create','Would update'=>'update'] as $label=>$key){
             echo '<li>'.esc_html($label.': '.absint($s[$key])).'</li>';
         }
         echo '</ul></div></div>';
@@ -573,9 +573,16 @@ next();
         ];
 
         foreach($aliases as $field => $options){
+            $configured = trim((string)($mapping[$field] ?? ''));
+            if ($configured !== '' && in_array($this->norm($configured), $headers, true)) {
+                continue;
+            }
+
             foreach($options as $alias){
-                if(in_array($this->norm($alias), $headers))
+                if(in_array($this->norm($alias), $headers, true)){
                     $mapping[$field] = $alias;
+                    break;
+                }
             }
         }
         return $mapping;
