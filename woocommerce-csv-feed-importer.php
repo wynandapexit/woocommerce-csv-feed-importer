@@ -222,38 +222,41 @@ function next(){
 
     fetch(ajaxurl, {
         method: "POST",
-        body: formData
-    }).then(r => r.json()).then(r => {
-        clearTimeout(watchdogTimer);
-        if(r.success) {
-            imported = r.data.imported;
-            failed = r.data.failed;
-            retryCount = 0;
-            batch++;
-            updateProgress();
-            setTimeout(next, 500);
-        } else {
-            console.error("Batch error:", r.data);
-            if(retryCount < maxRetries) {
-                retryCount++;
-                addError("Batch " + (batch + 1) + " error: " + (r.data || "Unknown") + " - retry " + retryCount);
-                setTimeout(next, 1000);
-            } else {
-                addError("Batch " + (batch + 1) + " failed permanently: " + (r.data || "Unknown"));
-                batch++;
-                updateProgress();
-                setTimeout(next, 2000);
-            }
+        body: formData,
+        credentials: "same-origin"
+    }).then(async r => {
+        const text = await r.text();
+        let payload = null;
+        try {
+            payload = text ? JSON.parse(text) : null;
+        } catch (e) {
+            throw new Error("HTTP " + r.status + " from admin-ajax.php: " + text.slice(0, 250));
         }
+        if(!r.ok || !payload || !payload.success) {
+            throw new Error((payload && payload.data) ? payload.data : "HTTP " + r.status + " from admin-ajax.php");
+        }
+        return payload;
+    }).then(r => {
+        clearTimeout(watchdogTimer);
+        imported = r.data.imported;
+        failed = r.data.failed;
+        retryCount = 0;
+        batch++;
+        updateProgress();
+        setTimeout(next, 500);
     }).catch(e => {
         clearTimeout(watchdogTimer);
-        console.error("Fetch error:", e);
+        console.error("Batch error:", e);
+        let msg = e && e.message ? e.message : "Unknown fetch error";
         if(retryCount < maxRetries) {
             retryCount++;
-            addError("Network error - retry " + retryCount);
+            addError("Batch " + (batch + 1) + " failed: " + msg + " - retry " + retryCount + " of " + maxRetries);
             setTimeout(next, 1000);
         } else {
-            document.location.href = "?page=wc-csv-feed-importer&notice=error";
+            addError("Batch " + (batch + 1) + " failed permanently: " + msg);
+            batch++;
+            updateProgress();
+            setTimeout(next, 2000);
         }
     });
 }
@@ -478,35 +481,41 @@ next();
 
         set_time_limit(120);
 
-        $batch_imported = 0;
-        $batch_failed = 0;
+        try {
+            $batch_imported = 0;
+            $batch_failed = 0;
 
-        foreach($rows as $idx => $row){
-            try {
-                if($this->save_row($row, $data['status'], $data['category'])){
-                    $batch_imported++;
-                    $data['imported']++;
-                } else {
+            foreach($rows as $idx => $row){
+                try {
+                    if($this->save_row($row, $data['status'], $data['category'])){
+                        $batch_imported++;
+                        $data['imported']++;
+                    } else {
+                        $batch_failed++;
+                        $data['failed']++;
+                    }
+                } catch(\Throwable $e){
                     $batch_failed++;
                     $data['failed']++;
+                    $data['errors'][] = 'Row ' . ($start + $idx + 1) . ': ' . $e->getMessage();
+                    error_log('CSV import row error: ' . $e->getMessage());
                 }
-            } catch(\Exception $e){
-                $batch_failed++;
-                $data['failed']++;
-                $data['errors'][] = 'Row ' . ($start + $idx + 1) . ': ' . $e->getMessage();
             }
+
+            $data['last_successful_batch'] = $batch;
+            set_transient($key, $data, 7200);
+
+            wp_send_json_success([
+                'batch' => $batch,
+                'imported' => $data['imported'],
+                'failed' => $data['failed'],
+                'batch_imported' => $batch_imported,
+                'batch_failed' => $batch_failed
+            ]);
+        } catch(\Throwable $e) {
+            error_log('CSV import batch error: ' . $e->getMessage());
+            wp_send_json_error('Batch processing failed: ' . $e->getMessage(), 500);
         }
-
-        $data['last_successful_batch'] = $batch;
-        set_transient($key, $data, 7200);
-
-        wp_send_json_success([
-            'batch' => $batch,
-            'imported' => $data['imported'],
-            'failed' => $data['failed'],
-            'batch_imported' => $batch_imported,
-            'batch_failed' => $batch_failed
-        ]);
     }
 
     public function watchdog() {
