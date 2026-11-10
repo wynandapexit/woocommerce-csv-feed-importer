@@ -276,21 +276,48 @@ next();
         if(!empty($file['error']) && UPLOAD_ERR_NO_FILE !== (int)$file['error'])
             wp_die('CSV upload failed.');
 
-        if(!empty($file['tmp_name']) && is_uploaded_file($file['tmp_name']))
+        if(!empty($file['tmp_name']) && is_uploaded_file($file['tmp_name'])) {
             $rows = $this->read_csv($file['tmp_name'], $mapping);
-        else {
+        } else {
             $url = esc_url_raw(wp_unslash($_POST['csv_feed_url'] ?? ''));
             if($url){
-                $response = wp_remote_get($url);
-                if(!is_wp_error($response) && '200' == wp_remote_retrieve_response_code($response)){
-                    $body = wp_remote_retrieve_body($response);
-                    $f = tmpfile();
-                    fwrite($f, $body);
-                    rewind($f);
-                    $path = stream_get_meta_data($f)['uri'];
-                    $rows = $this->read_csv($path, $mapping);
-                    fclose($f);
+                $response = wp_remote_get($url, [
+                    'timeout' => 60,
+                    'redirection' => 5,
+                    'sslverify' => false,
+                ]);
+
+                if (is_wp_error($response)) {
+                    error_log('CSV feed request error: ' . $response->get_error_message());
+                    $this->go(['notice'=>'error']);
                 }
+
+                $code = wp_remote_retrieve_response_code($response);
+                $body = wp_remote_retrieve_body($response);
+                $content_type = strtolower((string) wp_remote_retrieve_header($response, 'content-type'));
+
+                if ($code !== 200 || empty($body)) {
+                    error_log('CSV feed returned HTTP ' . $code);
+                    $this->go(['notice'=>'error']);
+                }
+
+                if (
+                    strpos($content_type, 'text/csv') === false &&
+                    strpos($content_type, 'application/csv') === false &&
+                    strpos($content_type, 'application/vnd.ms-excel') === false &&
+                    strpos($content_type, 'text/plain') === false
+                ) {
+                    error_log('CSV feed returned unexpected content-type: ' . $content_type);
+                    error_log('CSV feed body preview: ' . substr($body, 0, 500));
+                    $this->go(['notice'=>'error']);
+                }
+
+                $f = tmpfile();
+                fwrite($f, $body);
+                rewind($f);
+                $path = stream_get_meta_data($f)['uri'];
+                $rows = $this->read_csv($path, $mapping);
+                fclose($f);
             }
         }
 
