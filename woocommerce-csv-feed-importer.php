@@ -334,8 +334,15 @@ next();
             return ['errors' => $errors, 'warnings' => $warnings];
         }
 
-        if(empty($mapping['name']) || empty($mapping['sku'])){
-            $errors[] = 'Required fields "name" and "sku" must be mapped to columns in your CSV.';
+        $header_keys = array_keys($rows[0] ?? []);
+        foreach(['name','sku','price','stock'] as $field){
+            if(empty($mapping[$field])){
+                $errors[] = 'Required field "'.$field.'" must be mapped to a CSV column.';
+                continue;
+            }
+            if(!in_array($mapping[$field], $header_keys, true)){
+                $errors[] = 'Mapped CSV column "'.$mapping[$field].'" for field "'.$field.'" does not exist in the file.';
+            }
         }
 
         $skus = [];
@@ -353,7 +360,7 @@ next();
 
         if(!empty($sku_duplicates)){
             foreach($sku_duplicates as $sku => $indices){
-                $warnings[] = 'SKU "'.$sku.'" appears '.count($indices).' times (rows: '.implode(', ', array_map(function($i){ return $i + 1; }, $indices)).'). Only the first will be imported.';
+                $warnings[] = 'SKU "'.$sku.'" appears '.count($indices).' times (rows: '.implode(', ', array_map(function($i){ return $i + 1; }, $indices)).'). Later duplicates will update the same product instead of creating new ones.';
             }
         }
 
